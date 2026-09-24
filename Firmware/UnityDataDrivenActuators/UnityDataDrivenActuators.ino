@@ -1,86 +1,126 @@
 #include <Servo.h>
-
-#include <elapsedMillis.h>
+#include <stdlib.h>
+#include <string.h>
 
 // Unity Data Driven Actuators
-// A simple Arduino sketch to control actuators based on data from Unity
-// Created by Byron Lahey on 9/23/2026
-// Requirements: Arduino microcontroller, 1 Servo, 1 LED
-// Recieves data from Unity via the serial port
-// Parses the data
-// Controls the actuators according to specified logic and mapping of data 
-// Data will be sent from Unity in the format of three comma-separated positions (x, y, z) and a binary value (0 or 1) for the light. 
-// The servo will be controlled by the x position data.
-// The LED will be controlled by the binary value.
+// Receives newline-terminated CSV from Unity: x,y,z,light
 
-const int servoPin = 9;
-const int ledPin = 8;
-int positionValue[3];
-int lightValue = 0;
-int servoValue = 0;
-int ledValue = 0;
+const int SERVO_PIN = 9;
+const int LED_PIN = 8;
+
+const int SERIAL_BUFFER_SIZE = 96;
+char serialBuffer[SERIAL_BUFFER_SIZE];
+int serialBufferIndex = 0;
+
+// Tune these to the expected Unity x range in your scene.
+const float UNITY_X_MIN = -10.0f;
+const float UNITY_X_MAX = 10.0f;
+
+float posX = 0.0f;
+float posY = 0.0f;
+float posZ = 0.0f;
+int lightState = 0;
 
 Servo myServo;
 
-elapsedMillis readSerialDataTimer;
-long readSerialDataInterval = 40;
+int mapUnityXToServo(float xValue) {
+  if (UNITY_X_MAX <= UNITY_X_MIN) {
+    return 90;
+  }
 
-elapsedMillis updateServoTimer;
-long updateServoInterval = 40;
-
-elapsedMillis updateLedTimer;
-long updateLedInterval = 40;
-
-
-void setup() {
-  Serial.begin(115200);
-  delay(1000); // Wait for the serial port to be ready
-  pinMode(servoPin, OUTPUT);
-  pinMode(ledPin, OUTPUT);
-  myServo.attach(servoPin);
-
+  float normalized = (xValue - UNITY_X_MIN) / (UNITY_X_MAX - UNITY_X_MIN);
+  int servoAngle = (int)(normalized * 180.0f);
+  return constrain(servoAngle, 0, 180);
 }
 
-void loop() {
-  parseData();
-  positionServo();
-  updateLED();
+bool parseUnityCsvLine(const char* line, float& x, float& y, float& z, int& light) {
+  char buffer[SERIAL_BUFFER_SIZE];
+  strncpy(buffer, line, sizeof(buffer) - 1);
+  buffer[sizeof(buffer) - 1] = '\0';
 
+  char* token = strtok(buffer, ",");
+  if (token == NULL) return false;
+  x = atof(token);
+
+  token = strtok(NULL, ",");
+  if (token == NULL) return false;
+  y = atof(token);
+
+  token = strtok(NULL, ",");
+  if (token == NULL) return false;
+  z = atof(token);
+
+  token = strtok(NULL, ",");
+  if (token == NULL) return false;
+  light = atoi(token);
+
+  return true;
 }
 
-void parseData() {
-  if (readSerialDataTimer > readSerialDataInterval) {
-    readSerialDataTimer = 0;
-    if (Serial.available() > 0) {
-      // Read the full data message from Unity
-      // Save the postion and Light data to a string
-      // Use the x position to set the servo value
-      // Use the light status to set the LED value
+void handleIncomingUnityData(const char* line) {
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
+  int light = 0;
 
-      String data = Serial.readString();
-      positionValue[0] = data.substring(0, data.indexOf(',')).toInt();
-      positionValue[1] = data.substring(data.indexOf(',') + 1, data.lastIndexOf(',')).toInt();
-      positionValue[2] = data.substring(data.lastIndexOf(',') + 1).toInt();
-      lightValue = data.substring(data.lastIndexOf(',') + 1).toInt();
-      servoValue = positionValue[0];
-      ledValue = lightValue;
+  if (!parseUnityCsvLine(line, x, y, z, light)) {
+    return;
+  }
+
+  posX = x;
+  posY = y;
+  posZ = z;
+  lightState = (light != 0) ? 1 : 0;
+}
+
+void processIncomingSerial() {
+  while (Serial.available() > 0) {
+    char incomingChar = (char)Serial.read();
+
+    if (incomingChar == '\r') {
+      continue;
+    }
+
+    if (incomingChar == '\n') {
+      serialBuffer[serialBufferIndex] = '\0';
+
+      if (serialBufferIndex > 0) {
+        handleIncomingUnityData(serialBuffer);
       }
+
+      serialBufferIndex = 0;
+    } else if (serialBufferIndex < SERIAL_BUFFER_SIZE - 1) {
+      serialBuffer[serialBufferIndex++] = incomingChar;
+    } else {
+      // If a line is too long, reset and wait for the next message.
+      serialBufferIndex = 0;
     }
   }
 }
 
-void positionServo() {
-  if (updateServoTimer > updateServoInterval) {
-    updateServoTimer = 0;
-    int servoPosition = map(servoValue, 0, 1023, 0, 180);
-    servoPosition = constrain(servoPosition, 0, 180);
-    myServo.write(servoPosition);
-  }
+void updateActuators() {
+  int servoAngle = mapUnityXToServo(posX);
+  myServo.write(servoAngle);
+  digitalWrite(LED_PIN, lightState ? HIGH : LOW);
 }
 
-void updateLED() {
-  if (updateLedTimer > updateLedInterval) {
-    updateLedTimer = 0;
-    digitalWrite(ledPin, ledValue);
-  }
+void setup() {
+  pinMode(LED_PIN, OUTPUT);
+  myServo.attach(SERVO_PIN);
+
+  Serial.begin(115200);
+  Serial.setTimeout(25);
+  delay(1000);
+
+  // Startup test sequence.
+  digitalWrite(LED_PIN, HIGH);
+  myServo.write(0);
+  delay(500);
+  digitalWrite(LED_PIN, LOW);
+  myServo.write(90);
+}
+
+void loop() {
+  processIncomingSerial();
+  updateActuators();
 }

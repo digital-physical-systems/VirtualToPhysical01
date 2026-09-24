@@ -9,6 +9,7 @@
 using UnityEngine;
 using System.IO.Ports;
 using System;
+using System.Globalization;
 
 
 public class SendToArduinoScript : MonoBehaviour
@@ -22,6 +23,7 @@ public class SendToArduinoScript : MonoBehaviour
 
     public Light lightSource; // Drag the Light whose status you want to send to the Arduino
     public int sendInterval = 40; // The interval at which to send data (in milliseconds)
+    private float nextSendTime;
 
 
 
@@ -30,23 +32,40 @@ public class SendToArduinoScript : MonoBehaviour
     {
         serialPort = new SerialPort(portName, baudRate);
         serialPort.WriteTimeout = 1000;
+        serialPort.NewLine = "\n";
+        serialPort.DtrEnable = true;
+        serialPort.RtsEnable = true;
+        nextSendTime = Time.time;
         try
         {
             serialPort.Open();
+            Debug.Log("Serial port opened successfully.");
 
         }
         catch (Exception e)
         {
             Debug.LogError("Error opening serial port: " + e.Message);
+            Debug.LogError("Available serial ports: " + string.Join(", ", SerialPort.GetPortNames()));
         }
     }
 
     // Update is called once per frame
     void Update()
     {
-        if (Time.time % (sendInterval / 1000.0f) < Time.deltaTime / 1000.0f)
+        float intervalSeconds = sendInterval / 1000.0f;
+        if (intervalSeconds <= 0f)
+        {
+            return;
+        }
+
+        if (Time.time >= nextSendTime)
         {
             SendDataToArduino();
+            // Keep cadence steady even if a frame is delayed.
+            while (nextSendTime <= Time.time)
+            {
+                nextSendTime += intervalSeconds;
+            }
         }
     }
 
@@ -55,11 +74,25 @@ public class SendToArduinoScript : MonoBehaviour
 
         if (serialPort != null && serialPort.IsOpen)
         {
+            if (dataSource == null || lightSource == null)
+            {
+                Debug.LogWarning("SendToArduinoScript is missing dataSource or lightSource reference.");
+                return;
+            }
+
             // Example: Send the position of the dataSource GameObject
             Vector3 position = dataSource.position;
-            string data = string.Format("{0},{1},{2},{3}", position.x, position.y, position.z, lightSource.enabled ? 1 : 0);
+            string data = string.Format(
+                CultureInfo.InvariantCulture,
+                "{0},{1},{2},{3}",
+                position.x,
+                position.y,
+                position.z,
+                lightSource.enabled ? 1 : 0
+            );
 
             serialPort.WriteLine(data);
+            Debug.Log("Data sent to Arduino: " + data);
         }
     }
 
