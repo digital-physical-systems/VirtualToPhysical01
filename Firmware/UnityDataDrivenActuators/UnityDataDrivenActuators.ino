@@ -9,9 +9,14 @@
 // Recieves data from Unity via the serial port
 // Parses the data
 // Controls the actuators according to specified logic and mapping of data 
+// Data will be sent from Unity in the format of three comma-separated positions (x, y, z) and a binary value (0 or 1) for the light. 
+// The servo will be controlled by the x position data.
+// The LED will be controlled by the binary value.
 
 const int servoPin = 9;
-const int ledPin = 13;
+const int ledPin = 8;
+int positionValue[3];
+int lightValue = 0;
 int servoValue = 0;
 int ledValue = 0;
 
@@ -47,11 +52,18 @@ void parseData() {
   if (readSerialDataTimer > readSerialDataInterval) {
     readSerialDataTimer = 0;
     if (Serial.available() > 0) {
+      // Read the full data message from Unity
+      // Save the postion and Light data to a string
+      // Use the x position to set the servo value
+      // Use the light status to set the LED value
+
       String data = Serial.readString();
-      int commaIndex = data.indexOf(',');
-      if (commaIndex != -1) {
-        servoValue = data.substring(0, commaIndex).toInt();
-        ledValue = data.substring(commaIndex + 1).toInt();
+      positionValue[0] = data.substring(0, data.indexOf(',')).toInt();
+      positionValue[1] = data.substring(data.indexOf(',') + 1, data.lastIndexOf(',')).toInt();
+      positionValue[2] = data.substring(data.lastIndexOf(',') + 1).toInt();
+      lightValue = data.substring(data.lastIndexOf(',') + 1).toInt();
+      servoValue = positionValue[0];
+      ledValue = lightValue;
       }
     }
   }
